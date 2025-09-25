@@ -1,0 +1,29 @@
+app:
+ title: "RAG Starter Kit"
+ theme: "default"
+ logo: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQm41JR7bWH2Uv9LeYhfNHZ1gxgr7KfA0K5YA&s"
+ Industry: "Biological"
+
+languages:
+ supported: ["English", "Hebrew", "Spanish", "French", "Hindi"]
+
+LLM_Models:
+  supported: ["OpenAI/gpt-oss-120b", "Mistral/mistral-large-latest", "DeepSeek/DeepSeek-R1", "Meta/Llama-3.1-8B-Instruct"]
+
+Embedding_Models:
+  supported: ["sentence-transformers/all-MiniLM-L6-v2", "BAAI/bge-m3", "sentence-transformers/all-mpnet-base-v2", "google/embeddinggemma-300m"]
+
+vector_store:
+  supported: ["Chroma_DB", "FAISS_DB"]
+#  provider: "openai"
+#  model: "gpt-4o"
+# embeddings:
+#  model: "BAAI/bge-m3"
+# reranker:
+#  model: "BAAI/bge-reranker-v2-m3"
+# vector_store:
+#  type: "faiss"
+#  path: "vectors"
+# memory:
+#  self_learning_enabled: true
+#  knowledge_vector_path: "knowledge_memory"

@@ -1,0 +1,17 @@
+streamlit
+requests
+pandas
+numpy
+watchdog
+sentence-transformers
+transformers
+torch
+openai
+mistralai
+pymupdf
+pymupdf4llm
+faiss-cpu
+chromadb
+langchain
+langchain-community
+pillow
