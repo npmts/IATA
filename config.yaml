@@ -1,8 +1,8 @@
 app:
- title: "RAG Starter Kit"
+ title: "IATA Chatbot"
  theme: "default"
  logo: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQm41JR7bWH2Uv9LeYhfNHZ1gxgr7KfA0K5YA&s"
- Industry: "Biological"
+ Industry: "Aviation"
 
 languages:
  supported: ["English", "Hebrew", "Spanish", "French", "Hindi"]

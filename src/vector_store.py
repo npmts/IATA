@@ -42,24 +42,44 @@ class Vector_stores:
 
 
     def _rerank_retrieved_docs(self, query, retrieved_docs, top_n):
-        pairs = [(query, doc) for doc in retrieved_docs]
+        if not retrieved_docs:
+            return []
+        pairs = [(query, doc["content"]) for doc in retrieved_docs]
         scores = self.reranker.predict(pairs)
         ranked = sorted(zip(retrieved_docs, scores), key=lambda x: x[1], reverse=True)
         top_docs = [doc for doc, _ in ranked[:top_n]]
         return top_docs
-        
-    
+
+
     def retrieve_documents(self, query_embeddings, query, n_results):
         if self.provider == "Chroma_DB":
-            results = self.vec_store.query(query_embeddings=query_embeddings, n_results=20)['documents'][0]
-            reranked_results = self._rerank_retrieved_docs(query, results, top_n=n_results)
+            results = self.vec_store.query(
+                query_embeddings=query_embeddings,
+                n_results=20,
+                include=["documents", "metadatas"],
+            )
+            documents = results.get("documents", [[]])[0]
+            metadatas = results.get("metadatas", [[]])[0]
+            retrieved = [
+                {"content": doc, "metadata": metadata or {}}
+                for doc, metadata in zip(documents, metadatas)
+                if doc
+            ]
+            reranked_results = self._rerank_retrieved_docs(query, retrieved, top_n=n_results)
 
             return reranked_results
-        
+
         elif self.provider == "FAISS_DB":
             docs = self.vec_store.similarity_search_by_vector(query_embeddings, k=20)
-            results = [doc.page_content for doc in docs]
-            reranked_results = self._rerank_retrieved_docs(query, results, top_n=n_results)
+            retrieved = [
+                {
+                    "content": doc.page_content,
+                    "metadata": getattr(doc, "metadata", {}) or {},
+                }
+                for doc in docs
+                if doc.page_content
+            ]
+            reranked_results = self._rerank_retrieved_docs(query, retrieved, top_n=n_results)
 
             return reranked_results
         

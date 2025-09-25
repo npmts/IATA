@@ -1,6 +1,5 @@
 import os
 from sentence_transformers import SentenceTransformer
-from transformers import AutoTokenizer
 
 class Embedding_models:
     def __init__(self, model_name):

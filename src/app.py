@@ -12,20 +12,7 @@ from langchain.text_splitter import MarkdownTextSplitter
 from PIL import Image
 import requests
 from io import BytesIO
-import time
-from typing import Dict
-
-
-
-def stream_data_mistral(stream_response):
-    full_response = ""
-    for chunk in stream_response:
-        response = chunk.data.choices[0].delta.content
-        yield response
-        full_response += response
-        time.sleep(0.02)
-
-    return full_response
+from typing import Dict, List
 
 
 # def stream_data_openai(stream_response):
@@ -87,12 +74,27 @@ def get_chunks(markdown_text, chunk_size, chunk_overlap):
 #     return final_chunks
 
 
-def get_content(retrieved_documents):
-    content = ""
-    for idx, document in enumerate(retrieved_documents):
-        content += f"---------------------------------------------------------\n{document}\n\n"
+def get_content(retrieved_documents: List[Dict[str, str]]) -> str:
+    if not retrieved_documents:
+        return ""
 
-    return content
+    sections: List[str] = []
+    for document in retrieved_documents:
+        metadata = document.get("metadata", {}) or {}
+        source = metadata.get("source", "Document")
+        sections.append(f"--- {source} ---\n{document.get('content', '')}")
+
+    return "\n\n".join(sections)
+
+
+def extract_sources(retrieved_documents: List[Dict[str, str]]) -> List[str]:
+    sources = []
+    for document in retrieved_documents:
+        metadata = document.get("metadata", {}) or {}
+        source = metadata.get("source")
+        if source and source not in sources:
+            sources.append(source)
+    return sources
 
 
 def pass_submit_button():
@@ -182,6 +184,10 @@ if "submit_button" not in st.session_state:
 if "dlt_vec_store" not in st.session_state:
     st.session_state.dlt_vec_store = False
 
+st.session_state.setdefault("top_k_results", 5)
+
+uploaded_files: List = []
+
 with st.sidebar:
     st.logo(CONFIG["app"]["logo"], size="large")
     st.title(CONFIG['app']['title'])
@@ -192,8 +198,7 @@ with st.sidebar:
         st.session_state.LLM_client = LLM_Assistant(industry=CONFIG['app']['Industry'], provider=LLM_Model)
         st.session_state.LLM_model_changed = False
 
-    global response_lang
-    response_lang = st.selectbox("Select a response language", CONFIG["languages"]["supported"], index = 0, accept_new_options=True, key="response_lang_key")
+    response_lang = st.selectbox("Select a response language", CONFIG["languages"]["supported"], index=0, accept_new_options=True, key="response_lang_key")
 
     st.markdown("## Import and chat with you PDF/s")
     uploaded_files = st.file_uploader("Upload PDF/s", accept_multiple_files=True, type="pdf", key="pdf_uploader_key", on_change=pause_submit_button)
@@ -202,78 +207,70 @@ with st.sidebar:
         st.session_state.previous_uploaded_file_names = []
         try:
             st.session_state.vector_database.delete_vector_store()
-        except:
+        except Exception:
             pass
+        st.session_state.embedding_model = None
+        st.session_state.vector_database = None
 
     elif uploaded_files:
         embed_func = st.selectbox("Select Embedding Model", CONFIG["Embedding_Models"]["supported"], index=0, key="embedding_model_key", on_change=delete_vec_store)
 
-        Embedding_models_obj = Embedding_models(model_name = embed_func)
-        st.session_state.embedding_model = Embedding_models_obj.get_embedding_model()
-
-        # max_value = Embedding_models_obj.max_seq_length
-        # min_value = int(max_value/4)
-
-        # st.write("max seq length for the selected embedding model is: ", max_value)
+        embedding_models_obj = Embedding_models(model_name=embed_func)
+        st.session_state.embedding_model = embedding_models_obj.get_embedding_model()
 
         col1, col2 = st.columns(2)
         chunk_size = col1.number_input("Chunk Size", min_value=100, max_value=8000, value=1000, key="chunk_size_key", on_change=delete_vec_store)
         chunk_overlap = col2.number_input("Chunk Overlap", min_value=10, max_value=800, value=100, key="chunk_overlap_key", on_change=delete_vec_store)
 
         current_file_names = [uploaded_file.name for uploaded_file in uploaded_files]
-
-        # embed_func = st.selectbox("Select Embedding Model", CONFIG["Embedding_Models"]["supported"], index=0, key="embedding_model_key", on_change=delete_vec_store)
         vector_store_provider = st.selectbox("Select Vector Store", CONFIG["vector_store"]["supported"], index=0, key="vector_store_key", on_change=delete_vec_store)
 
         st.button("Submit", on_click=pass_submit_button, key="submit", type="primary", disabled=st.session_state.submit_button)
 
-        global top_k_results
-        top_k_results = st.slider("Top K Results", min_value=1, max_value=10, value=5, step=1, key="top_k_results_key")
+        top_k_results = st.slider(
+            "Top K Results",
+            min_value=1,
+            max_value=10,
+            value=st.session_state.get("top_k_results", 5),
+            step=1,
+            key="top_k_results_key",
+        )
+        st.session_state.top_k_results = top_k_results
 
         if st.session_state.submit_button:
-            if len(current_file_names) > len(st.session_state.previous_uploaded_file_names) or st.session_state.dlt_vec_store:
-                if len(st.session_state.previous_uploaded_file_names) == 0 or st.session_state.dlt_vec_store:
-                    # st.session_state.embedding_model, st.session_state.tokenizer = Embedding_models(model_name = embed_func).get_embedding_model()
-                    st.session_state.vector_database = Vector_stores(provider = vector_store_provider, embedding_model = st.session_state.embedding_model)
+            previous_files = st.session_state.previous_uploaded_file_names
+            needs_new_store = (
+                st.session_state.vector_database is None
+                or st.session_state.dlt_vec_store
+                or not previous_files
+            )
 
-                    for uploaded_file in uploaded_files:
-                        md_texts = get_texts(uploaded_file)
-                        chunks = get_chunks(md_texts, chunk_size, chunk_overlap)
-                        # final_chunks = get_final_chunks(chunks, chunk_size=chunk_size, overlap=chunk_overlap)
+            if needs_new_store:
+                st.session_state.vector_database = Vector_stores(provider=vector_store_provider, embedding_model=st.session_state.embedding_model)
 
-                        embeddings = st.session_state.embedding_model.encode(chunks)
-                        metadatas = [{"source": uploaded_file.name}]*len(chunks)
-                        ids = [f"{uploaded_file.name}_{str(i)}" for i in range(len(chunks))]
+            files_to_process = current_file_names if needs_new_store else [
+                name for name in current_file_names if name not in previous_files
+            ]
 
-                        st.session_state.vector_database.add_embeddings(ids=ids, texts=chunks, embeddings=embeddings, metadatas=metadatas)
+            for uploaded_file in uploaded_files:
+                if uploaded_file.name in files_to_process:
+                    md_texts = get_texts(uploaded_file)
+                    chunks = get_chunks(md_texts, chunk_size, chunk_overlap)
+                    embeddings = st.session_state.embedding_model.encode(chunks)
+                    metadatas = [{"source": uploaded_file.name}] * len(chunks)
+                    ids = [f"{uploaded_file.name}_{i}" for i in range(len(chunks))]
 
-                        st.session_state.previous_uploaded_file_names = current_file_names
+                    st.session_state.vector_database.add_embeddings(ids=ids, texts=chunks, embeddings=embeddings, metadatas=metadatas)
 
-                else:
-                    new_files_names = list(set(current_file_names) - set(st.session_state.previous_uploaded_file_names))
-                    st.session_state.previous_uploaded_file_names = current_file_names
-
-                    for uploaded_file in uploaded_files:
-
-                        if uploaded_file.name in new_files_names:
-                            md_texts = get_texts(uploaded_file)
-                            chunks = get_chunks(md_texts, chunk_size, chunk_overlap)
-                            # final_chunks = get_final_chunks(chunks, chunk_size=chunk_size, overlap=chunk_overlap)
-
-                            embeddings = st.session_state.embedding_model.encode(chunks)
-                            metadatas = [{"source": uploaded_file.name}]*len(chunks)
-                            ids = [f"{uploaded_file.name}_{str(i)}" for i in range(len(chunks))]
-
-                            st.session_state.vector_database.add_embeddings(ids=ids, documents=chunks, embeddings=embeddings, metadatas=metadatas)
-
-            elif len(current_file_names) < len(st.session_state.previous_uploaded_file_names):
-                pdf_names_to_remove = list(set(st.session_state.previous_uploaded_file_names) - set(current_file_names))
-
+            if st.session_state.vector_database is not None and len(current_file_names) < len(previous_files):
+                pdf_names_to_remove = list(set(previous_files) - set(current_file_names))
                 for pdf_name in pdf_names_to_remove:
-                    st.session_state.vector_database.delete_embeddings(filter={"source": pdf_name})
+                    try:
+                        st.session_state.vector_database.delete_embeddings(filter={"source": pdf_name})
+                    except AttributeError:
+                        pass
 
-                st.session_state.previous_uploaded_file_names = current_file_names
-
+            st.session_state.previous_uploaded_file_names = current_file_names
             st.session_state.dlt_vec_store = False
 
     st.markdown("---")
@@ -330,24 +327,63 @@ if query := st.chat_input("What is up?"):
     with st.chat_message("user"):
         st.markdown(query)
 
+    retrieved_documents: List[Dict[str, str]] = []
+    content = ""
+    retrieved_sources: List[str] = []
+    top_k_results = st.session_state.get("top_k_results", 5)
+
     try:
-        query_embeddings = st.session_state.embedding_model.encode(query)
-        retrieved_documents = st.session_state.vector_database.retrieve_documents(query_embeddings=query_embeddings, query=query, n_results=top_k_results)
-        content = get_content(retrieved_documents)
-
+        if st.session_state.embedding_model is not None and st.session_state.vector_database is not None:
+            query_embeddings = st.session_state.embedding_model.encode(query)
+            retrieved_documents = st.session_state.vector_database.retrieve_documents(
+                query_embeddings=query_embeddings,
+                query=query,
+                n_results=top_k_results,
+            ) or []
+            content = get_content(retrieved_documents)
+            retrieved_sources = extract_sources(retrieved_documents)
     except AttributeError:
-        content = "No documents found."
+        retrieved_documents = []
+        content = ""
 
+    doc_titles = list(st.session_state.previous_uploaded_file_names)
+    for source in retrieved_sources:
+        if source not in doc_titles:
+            doc_titles.append(source)
+
+    assistant_reply = ""
     with st.chat_message("assistant"):
-        st.markdown(content)
+        if st.session_state.LLM_client is None:
+            st.warning("LLM client is not configured. Please select a model to continue.")
+        else:
+            try:
+                response_stream = st.session_state.LLM_client.get_response(
+                    query,
+                    doc_titles=doc_titles,
+                    retrieved_content=content,
+                    response_lang=response_lang,
+                )
 
-    st.session_state.previous_messages.append({"role": "assistant", "content": content})
+                if isinstance(response_stream, str):
+                    st.markdown(response_stream)
+                    assistant_reply = response_stream
+                else:
+                    response_output = st.write_stream(response_stream)
+                    assistant_reply = response_output or st.session_state.LLM_client.last_response or ""
+            except Exception as error:
+                st.error(f"Failed to generate response: {error}")
+                assistant_reply = "I encountered an error while generating a response."
+
+    assistant_reply = assistant_reply.strip()
+    if not assistant_reply:
+        if content:
+            assistant_reply = content
+        else:
+            assistant_reply = "I don't have enough information to answer this question."
+
+    st.session_state.previous_messages.append({"role": "assistant", "content": assistant_reply})
     chat_history.save_message(
         st.session_state.conversation_id,
         role="assistant",
-        content=content,
+        content=assistant_reply,
     )
-
-    # with st.chat_message("assistant"):
-    #     st.write_stream(st.session_state.LLM_client.get_response(query, content, response_lang))
-    #     st.session_state.previous_messages.append({"role": "assistant", "content": st.session_state.LLM_client.last_response})
