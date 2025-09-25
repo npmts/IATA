@@ -114,6 +114,15 @@ def delete_vec_store():
         pass
 
 
+def trigger_rerun() -> None:
+    """Trigger a Streamlit rerun across supported versions."""
+    rerun = getattr(st, "experimental_rerun", None) or getattr(st, "rerun", None)
+    if rerun is not None:
+        rerun()
+    else:
+        raise RuntimeError("Streamlit rerun functionality is not available in this version.")
+
+
 CONFIG_PATH = os.getenv("APP_CONFIG_PATH", "./configs/config.yaml")
 with open(CONFIG_PATH, "r") as f:
    CONFIG = yaml.safe_load(f)
@@ -298,14 +307,14 @@ with st.sidebar:
             st.session_state.conversation_id = selected_conversation
             st.session_state.previous_messages = chat_history.load_conversation(selected_conversation) or [get_initial_message()]
             st.session_state.active_conversation = selected_conversation
-            st.experimental_rerun()
+            trigger_rerun()
 
     if st.button("Start new conversation", use_container_width=True):
         new_conversation_id = chat_history.create_conversation(initial_message=get_initial_message())
         st.session_state.conversation_id = new_conversation_id
         st.session_state.previous_messages = chat_history.load_conversation(new_conversation_id)
         st.session_state.active_conversation = new_conversation_id
-        st.experimental_rerun()
+        trigger_rerun()
 
 for message in st.session_state.previous_messages:
     with st.chat_message(message["role"]):
