@@ -1,6 +1,7 @@
 from llm_assistant import LLM_Assistant
 from embedding_models import Embedding_models
 from vector_store import Vector_stores
+from chat_history import ChatHistory
 
 import streamlit as st
 import yaml
@@ -12,6 +13,7 @@ from PIL import Image
 import requests
 from io import BytesIO
 import time
+from typing import Dict
 
 
 
@@ -112,9 +114,28 @@ def delete_vec_store():
         pass
 
 
+def trigger_rerun() -> None:
+    """Trigger a Streamlit rerun across supported versions."""
+    rerun = getattr(st, "experimental_rerun", None) or getattr(st, "rerun", None)
+    if rerun is not None:
+        rerun()
+    else:
+        raise RuntimeError("Streamlit rerun functionality is not available in this version.")
+
+
 CONFIG_PATH = os.getenv("APP_CONFIG_PATH", "./configs/config.yaml")
 with open(CONFIG_PATH, "r") as f:
    CONFIG = yaml.safe_load(f)
+
+
+chat_history = ChatHistory(os.getenv("CHAT_HISTORY_PATH", os.path.join(os.path.dirname(__file__), "..", "chat_history.sqlite")))
+
+
+def get_initial_message() -> Dict[str, str]:
+    return {
+        "role": "assistant",
+        "content": f"How can I help you as a {CONFIG['app']['Industry']} industry assistant?",
+    }
 
 
 response = requests.get(CONFIG['app']['logo'])
@@ -122,8 +143,20 @@ img = Image.open(BytesIO(response.content))
 st.set_page_config(page_title=CONFIG['app']['title'],page_icon=img,layout="wide",initial_sidebar_state="expanded")
 
 
+if "conversation_id" not in st.session_state:
+    initial_message = get_initial_message()
+    st.session_state.conversation_id = chat_history.create_conversation(
+        title=None,
+        initial_message=initial_message,
+    )
+    st.session_state.previous_messages = chat_history.load_conversation(st.session_state.conversation_id)
+
 if "previous_messages" not in st.session_state:
-    st.session_state.previous_messages = [{"role": "assistant", "content": f"How can I help you as a {CONFIG['app']['Industry']} industry assistant?"}]
+    loaded_messages = chat_history.load_conversation(st.session_state.conversation_id)
+    st.session_state.previous_messages = loaded_messages if loaded_messages else [get_initial_message()]
+
+if "active_conversation" not in st.session_state:
+    st.session_state.active_conversation = st.session_state.conversation_id
 
 if "LLM_client" not in st.session_state:
     st.session_state.LLM_client = None
@@ -243,12 +276,57 @@ with st.sidebar:
 
             st.session_state.dlt_vec_store = False
 
+    st.markdown("---")
+    st.markdown("## Conversation history")
+
+    conversations = chat_history.list_conversations()
+    conversation_options = [conversation.id for conversation in conversations]
+
+    if conversation_options:
+        try:
+            default_index = conversation_options.index(st.session_state.conversation_id)
+        except ValueError:
+            default_index = 0
+
+        def format_conversation(option_id: str) -> str:
+            for conversation in conversations:
+                if conversation.id == option_id:
+                    timestamp = conversation.created_at.split("T")[0]
+                    return f"{conversation.title} ({timestamp})"
+            return option_id
+
+        selected_conversation = st.selectbox(
+            "View past sessions",
+            options=conversation_options,
+            index=default_index,
+            format_func=format_conversation,
+            key="conversation_history_select",
+        )
+
+        if selected_conversation != st.session_state.active_conversation:
+            st.session_state.conversation_id = selected_conversation
+            st.session_state.previous_messages = chat_history.load_conversation(selected_conversation) or [get_initial_message()]
+            st.session_state.active_conversation = selected_conversation
+            trigger_rerun()
+
+    if st.button("Start new conversation", use_container_width=True):
+        new_conversation_id = chat_history.create_conversation(initial_message=get_initial_message())
+        st.session_state.conversation_id = new_conversation_id
+        st.session_state.previous_messages = chat_history.load_conversation(new_conversation_id)
+        st.session_state.active_conversation = new_conversation_id
+        trigger_rerun()
+
 for message in st.session_state.previous_messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
 if query := st.chat_input("What is up?"):
     st.session_state.previous_messages.append({"role": "user", "content": query})
+    chat_history.save_message(
+        st.session_state.conversation_id,
+        role="user",
+        content=query,
+    )
     with st.chat_message("user"):
         st.markdown(query)
 
@@ -260,7 +338,15 @@ if query := st.chat_input("What is up?"):
     except AttributeError:
         content = "No documents found."
 
-    st.markdown(content)
+    with st.chat_message("assistant"):
+        st.markdown(content)
+
+    st.session_state.previous_messages.append({"role": "assistant", "content": content})
+    chat_history.save_message(
+        st.session_state.conversation_id,
+        role="assistant",
+        content=content,
+    )
 
     # with st.chat_message("assistant"):
     #     st.write_stream(st.session_state.LLM_client.get_response(query, content, response_lang))
